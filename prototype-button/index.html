@@ -1,0 +1,253 @@
+<!--
+  PROTOTYPE — throwaway, do not fold this file into production.
+  Question: arah visual Button component (issue #21) — bentuk (radius/fill/outline),
+  bukan warna/tipografi/spacing (itu udah locked di issue #20, dipakai apa adanya di sini).
+  Tiga varian construction style, switchable via ?style=A|B|C, on this single throwaway route.
+  Tiap style render grid lengkap: 3 varian (primary/secondary/danger) x 5 state
+  (default/hover/active/disabled/loading), light & dark side-by-side.
+  Hover/active state di-render statis (bukan cuma CSS :hover) biar semua state kelihatan
+  sekaligus dalam satu preview tanpa perlu interaksi mouse — kolom "default" tetap interaktif asli.
+  Run: buka file ini langsung di browser (double-click atau `open index.html`).
+-->
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PROTOTYPE — Button</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: ui-sans-serif, system-ui, sans-serif; }
+  .switcher-btn:focus { outline: 2px solid #6366f1; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { animation: spin .7s linear infinite; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+<div id="app"></div>
+
+<!-- Floating variant switcher -->
+<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-slate-900 text-white rounded-full shadow-lg px-2 py-2 border-2 border-amber-400">
+  <button id="prevBtn" class="switcher-btn w-8 h-8 rounded-full hover:bg-slate-700 flex items-center justify-center" aria-label="Style sebelumnya">←</button>
+  <span id="variantLabel" class="text-sm font-medium px-2 min-w-[260px] text-center"></span>
+  <button id="nextBtn" class="switcher-btn w-8 h-8 rounded-full hover:bg-slate-700 flex items-center justify-center" aria-label="Style berikutnya">→</button>
+  <span class="text-[10px] uppercase tracking-wide text-amber-400 pr-2 pl-1 border-l border-slate-700">PROTOTYPE</span>
+</div>
+
+<script>
+// ---------- Locked design tokens (issue #20 resolution, Varian B "Profesional & Tegas") ----------
+// Dipakai apa adanya — pertanyaan prototype ini bukan soal warna, tapi soal construction style tombol.
+const TOKEN = {
+  font: "'Inter', ui-sans-serif, system-ui, sans-serif",
+  light: { bg:"#F8FAFC", surface:"#FFFFFF", text:"#0F172A", textSecondary:"#64748B", border:"#E2E8F0",
+           primary:"#2563EB", primaryHover:"#1D4ED8", secondary:"#0EA5E9", danger:"#DC2626" },
+  dark:  { bg:"#0B1220", surface:"#111827", text:"#F1F5F9", textSecondary:"#94A3B8", border:"#1F2937",
+           primary:"#3B82F6", primaryHover:"#60A5FA", secondary:"#38BDF8", danger:"#EF4444" },
+  // Body level dari type scale (14px/400); weight 600 dipinjam dari H3 level buat label tombol.
+  labelSize: 14, labelWeight: 600,
+  // Spacing scale (px): 4, 8, 12, 16, 20, 28, 40, 56, 80
+  spacing: [4,8,12,16,20,28,40,56,80]
+};
+
+// -- Turunan hover/active: dihitung dari rasio lightness primary→primaryHover token,
+//    diterapkan konsisten ke secondary & danger (bukan warna baru, cuma derivasi sistematis). --
+function hexToHsl(hex) {
+  let r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h, s, l = (max+min)/2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    switch (max) {
+      case r: h = (g-b)/d + (g<b?6:0); break;
+      case g: h = (b-r)/d + 2; break;
+      case b: h = (r-g)/d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h*360, s*100, l*100];
+}
+function hslToHex(h,s,l) {
+  s/=100; l/=100;
+  const c = (1-Math.abs(2*l-1))*s, x = c*(1-Math.abs((h/60)%2-1)), m = l-c/2;
+  let r,g,b;
+  if (h<60) [r,g,b]=[c,x,0]; else if (h<120) [r,g,b]=[x,c,0]; else if (h<180) [r,g,b]=[0,c,x];
+  else if (h<240) [r,g,b]=[0,x,c]; else if (h<300) [r,g,b]=[x,0,c]; else [r,g,b]=[c,0,x];
+  const toHex = v => Math.round((v+m)*255).toString(16).padStart(2,"0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+function shade(hex, deltaL) {
+  const [h,s,l] = hexToHsl(hex);
+  return hslToHex(h, s, Math.max(0, Math.min(100, l+deltaL)));
+}
+function deltaFor(mode) {
+  const [,,lPrimary] = hexToHsl(TOKEN[mode].primary);
+  const [,,lHover] = hexToHsl(TOKEN[mode].primaryHover);
+  return lHover - lPrimary; // negative = darken (light mode), positive = lighten (dark mode)
+}
+
+function colorsFor(mode, variant) {
+  const t = TOKEN[mode];
+  const base = variant === "primary" ? t.primary : variant === "secondary" ? t.secondary : t.danger;
+  const hoverToken = variant === "primary" ? t.primaryHover : null;
+  const d = deltaFor(mode);
+  return {
+    base,
+    hover: hoverToken || shade(base, d),
+    active: hoverToken ? shade(hoverToken, d) : shade(base, d*2)
+  };
+}
+
+// ---------- Button construction styles ----------
+const VARIANTS = ["primary","secondary","danger"];
+const STATES = ["default","hover","active","disabled","loading"];
+const STATE_LABELS = { default:"Default", hover:"Hover", active:"Active", disabled:"Disabled", loading:"Loading" };
+
+function spinnerSvg(color) {
+  return `<svg class="spinner w-4 h-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="${color}" stroke-width="3" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9" stroke="${color}" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+
+const STYLES = {
+  A: {
+    name: "Solid Uniform",
+    rationale: "Ketiga varian solid-fill konsisten. Paling standar/aman, tegas sesuai token B, tapi secondary & danger sama-sama 'berat' secara visual — bisa rebutan perhatian kalau dipasang berdampingan.",
+    radius: "6px",
+    padding: "px-4 py-2", // 16px / 8px — dari spacing scale
+    build(mode, variant, state) {
+      const t = TOKEN[mode];
+      const c = colorsFor(mode, variant);
+      const isDisabled = state === "disabled";
+      const isLoading = state === "loading";
+      let bg = c.base;
+      if (state === "hover") bg = c.hover;
+      if (state === "active") bg = c.active;
+      const label = isLoading ? "Memproses…" : variant === "primary" ? "Simpan" : variant === "secondary" ? "Batal" : "Hapus";
+      return `<button ${isDisabled || isLoading ? "disabled" : ""}
+        class="${this.padding} rounded-[6px] inline-flex items-center gap-2 transition-colors ${state==='active' ? 'scale-[0.97]' : ''} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}"
+        style="background:${bg}; color:#fff; font-family:${t.font}; font-size:${TOKEN.labelSize}px; font-weight:${TOKEN.labelWeight}; opacity:${isDisabled ? 0.4 : 1}; box-shadow:${state==='hover' ? '0 1px 3px rgba(0,0,0,.15)' : 'none'}">
+        ${isLoading ? spinnerSvg('#fff') : ''}${label}</button>`;
+    }
+  },
+  B: {
+    name: "Primary Solid + Tonal",
+    rationale: "Primary tetap solid (satu fokus aksi jelas), secondary & danger jadi tonal (bg tipis + teks berwarna) biar hierarki lebih jelas dan gak berebut bobot visual. Trade-off: danger jadi kurang 'mengancam' karena gak solid merah.",
+    radius: "8px",
+    padding: "px-5 py-3", // 20px / 12px — dari spacing scale
+    build(mode, variant, state) {
+      const t = TOKEN[mode];
+      const c = colorsFor(mode, variant);
+      const isDisabled = state === "disabled";
+      const isLoading = state === "loading";
+      const label = isLoading ? "Memproses…" : variant === "primary" ? "Simpan" : variant === "secondary" ? "Batal" : "Hapus";
+      let style;
+      if (variant === "primary") {
+        let bg = c.base;
+        if (state === "hover") bg = c.hover;
+        if (state === "active") bg = c.active;
+        style = `background:${bg}; color:#fff;`;
+      } else {
+        let bgAlpha = state === "active" ? "33" : state === "hover" ? "22" : "14";
+        style = `background:${c.base}${bgAlpha}; color:${c.base};`;
+      }
+      return `<button ${isDisabled || isLoading ? "disabled" : ""}
+        class="${this.padding} rounded-[8px] inline-flex items-center gap-2 transition-colors ${state==='active' ? 'scale-[0.97]' : ''} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}"
+        style="${style} font-family:${t.font}; font-size:${TOKEN.labelSize}px; font-weight:${TOKEN.labelWeight}; opacity:${isDisabled ? 0.4 : 1}">
+        ${isLoading ? spinnerSvg(variant === 'primary' ? '#fff' : c.base) : ''}${label}</button>`;
+    }
+  },
+  C: {
+    name: "Outlined Compact",
+    rationale: "Ketiga varian outline, padding lebih rapat. Cocok buat layar padat data (tabel Admin TU/Kepala Sekolah dengan banyak action button per baris). Fill cuma muncul di hover/active sebagai feedback.",
+    radius: "4px",
+    padding: "px-3 py-1", // 12px / 4px — dari spacing scale
+    build(mode, variant, state) {
+      const t = TOKEN[mode];
+      const c = colorsFor(mode, variant);
+      const isDisabled = state === "disabled";
+      const isLoading = state === "loading";
+      const label = isLoading ? "Memproses…" : variant === "primary" ? "Simpan" : variant === "secondary" ? "Batal" : "Hapus";
+      let style;
+      if (state === "hover") style = `background:${c.base}; color:#fff; border:1px solid ${c.base};`;
+      else if (state === "active") style = `background:${c.active}; color:#fff; border:1px solid ${c.active};`;
+      else style = `background:transparent; color:${c.base}; border:1px solid ${c.base};`;
+      return `<button ${isDisabled || isLoading ? "disabled" : ""}
+        class="${this.padding} rounded-[4px] inline-flex items-center gap-2 transition-colors ${state==='active' ? 'scale-[0.97]' : ''} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}"
+        style="${style} font-family:${t.font}; font-size:${TOKEN.labelSize}px; font-weight:${TOKEN.labelWeight}; opacity:${isDisabled ? 0.4 : 1}">
+        ${isLoading ? spinnerSvg(state==='hover'||state==='active' ? '#fff' : c.base) : ''}${label}</button>`;
+    }
+  }
+};
+const STYLE_KEYS = Object.keys(STYLES);
+
+function modeGrid(styleKey, mode) {
+  const t = TOKEN[mode];
+  const style = STYLES[styleKey];
+  const rows = VARIANTS.map(variant => `
+    <div class="grid grid-cols-6 gap-4 items-center py-3 border-b last:border-0" style="border-color:${t.border}">
+      <div class="text-xs font-semibold uppercase tracking-wide col-span-6 md:col-span-1 mb-1 md:mb-0" style="color:${t.textSecondary}; font-family:${t.font}">${variant}</div>
+      ${STATES.map(state => `<div class="flex flex-col items-start gap-1">${style.build(mode, variant, state)}</div>`).join("")}
+    </div>`).join("");
+  return `
+  <div class="rounded-2xl p-5" style="background:${t.bg}; border:1px solid ${t.border}">
+    <div class="text-[10px] uppercase tracking-wide mb-3" style="color:${t.textSecondary}; font-family:${t.font}">${mode === "light" ? "Light mode" : "Dark mode"}</div>
+    <div class="hidden md:grid grid-cols-6 gap-4 pb-2 text-xs font-medium" style="color:${t.textSecondary}; font-family:${t.font}">
+      <div></div>
+      ${STATES.map(s => `<div>${STATE_LABELS[s]}</div>`).join("")}
+    </div>
+    ${rows}
+  </div>`;
+}
+
+function renderStyle(key) {
+  const style = STYLES[key];
+  return `
+  <div class="max-w-5xl mx-auto px-6 py-10">
+    <div class="mb-8">
+      <div class="text-xs font-semibold uppercase tracking-wide text-indigo-500 mb-1">Style ${key}</div>
+      <h1 class="text-2xl font-bold" style="font-family:${TOKEN.font}">${style.name}</h1>
+      <p class="text-sm text-slate-500 mt-1 max-w-2xl">${style.rationale}</p>
+      <p class="text-xs text-slate-400 mt-2">Radius ${style.radius} · padding dari spacing scale (${STYLE_KEYS.indexOf(key)===0?'16px/8px':STYLE_KEYS.indexOf(key)===1?'20px/12px':'12px/4px'}) · warna & tipografi 100% dari token (issue #20)</p>
+    </div>
+    <div class="flex flex-col gap-6">
+      ${modeGrid(key, "light")}
+      ${modeGrid(key, "dark")}
+    </div>
+  </div>`;
+}
+
+// ---------- Wiring ----------
+const params = new URLSearchParams(location.search);
+let current = STYLE_KEYS.includes(params.get("style")) ? params.get("style") : "A";
+
+function setStyle(key) {
+  current = key;
+  const url = new URL(location.href);
+  url.searchParams.set("style", key);
+  history.replaceState(null, "", url);
+  document.getElementById("app").innerHTML = renderStyle(key);
+  document.getElementById("variantLabel").textContent = `${key} — ${STYLES[key].name}`;
+}
+
+document.getElementById("prevBtn").addEventListener("click", () => {
+  const i = STYLE_KEYS.indexOf(current);
+  setStyle(STYLE_KEYS[(i - 1 + STYLE_KEYS.length) % STYLE_KEYS.length]);
+});
+document.getElementById("nextBtn").addEventListener("click", () => {
+  const i = STYLE_KEYS.indexOf(current);
+  setStyle(STYLE_KEYS[(i + 1) % STYLE_KEYS.length]);
+});
+document.addEventListener("keydown", (e) => {
+  const tag = document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement.isContentEditable) return;
+  if (e.key === "ArrowLeft") document.getElementById("prevBtn").click();
+  if (e.key === "ArrowRight") document.getElementById("nextBtn").click();
+});
+
+setStyle(current);
+</script>
+</body>
+</html>
